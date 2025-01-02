@@ -13,7 +13,7 @@ import nltk  # Here to have a nice missing dependency error message early on
 
 import transformers
 from filelock import FileLock
-from InstructorEmbedding import Instructor, InstructorTransformer
+from InstructorEmbedding import INSTRUCTOR, INSTRUCTORTransformer
 from transformers import (
     AutoTokenizer,
     DataCollatorForSeq2Seq,
@@ -35,6 +35,7 @@ from torch.utils.data import Dataset, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from transformers.utils.versions import require_version
 from datasets import Dataset,DatasetDict
+
 
 
 check_min_version("4.20.0.dev0")
@@ -94,7 +95,7 @@ class InstructorTrainer(Seq2SeqTrainer):
                 seed=seed,
             )
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, num_items_in_batch = None, return_outputs=False):
         for task_id in inputs['task_id']:
             assert task_id==inputs['task_id'][0],f"Examples in the same batch should come from the same task, " \
                                                  f"but task {task_id} and task {inputs['task_id'][0]} are found"
@@ -363,6 +364,7 @@ class DataTrainingArguments:
             )
         },
     )
+
     def __post_init__(self):
         pass
 
@@ -426,7 +428,7 @@ def main():
             )
 
     # Set seed before initializing model.
-    instructor_tokenizer = InstructorTransformer(model_name_or_path=model_args.model_name_or_path, load_model=False)
+    instructor_tokenizer = INSTRUCTORTransformer(model_name_or_path=model_args.model_name_or_path, load_model=False)
     tokenizer = instructor_tokenizer.tokenizer #pre-trained tokentizer
 
     set_seed(training_args.seed)
@@ -495,7 +497,7 @@ def main():
 
     train_raw_datasets = DatasetDict({'train':Dataset.from_dict(get_dataset(train_examples_raw))})
 
-    model = Instructor(real_name_or_path, cache_folder=model_args.cache_dir)
+    model = INSTRUCTOR(real_name_or_path, cache_folder=model_args.cache_dir)
     column_names = train_raw_datasets["train"].column_names
 
     def preprocess_function(examples):
@@ -579,7 +581,14 @@ def main():
     elif last_checkpoint is not None:
         checkpoint = last_checkpoint
     trainer.train(resume_from_checkpoint=checkpoint)
-    trainer.model.save(training_args.output_dir)
+
+    trainer.model.save(training_args.output_dir) #코드 수정
+    # torch.save(trainer.model.state_dict(), "model.pt")
+    # save_model(trainer.model, "model.safetensors")
+    # trainer.model.save_pretrained(training_args.output_dir)  # Use HuggingFace's save_model method
+
+    # state_dict = {k: v.clone().detach() for k, v in trainer.model.state_dict().items()}
+    # save_model(state_dict, 'model_weights.safetensors')
 
 
 def _mp_fn(index):

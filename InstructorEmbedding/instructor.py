@@ -4,17 +4,21 @@ import json
 import os
 from collections import OrderedDict
 from typing import Union
+from pathlib import Path # Path 추가
+#import logging # 추가
 
 import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
-from sentence_transformers.models import Transformer
+from sentence_transformers.models import Transformer, Normalize # Normalize 추가
 from torch import Tensor, nn
 from tqdm.autonotebook import trange
 from transformers import AutoConfig, AutoTokenizer
-from sentence_transformers.util import disabled_tqdm
+from sentence_transformers.util import disabled_tqdm, load_file_path, load_dir_path # load_file_path, load_dir_path 추가
 from huggingface_hub import snapshot_download
 
+from safetensors.torch import save_model # 추가
+#from typing import Optional # 추가
 
 def batch_to_device(batch, target_device: str):
     for key in batch:
@@ -240,12 +244,27 @@ class INSTRUCTORPooling(nn.Module):
 
     @staticmethod
     def load(input_path):
+
+
+        ## 수정
+        # config_path = load_file_path(
+        #     input_path,
+        #     "config.json",
+        # )
+        
+        # with open(
+        #     config_path, encoding="UTF-8"
+        # ) as config_file:
+        #     config = json.load(config_file)
+        
         with open(
             os.path.join(input_path, "config.json"), encoding="UTF-8"
         ) as config_file:
             config = json.load(config_file)
 
+
         return INSTRUCTORPooling(**config)
+    
 
 
 def import_from_string(dotted_path):
@@ -363,6 +382,8 @@ class INSTRUCTORTransformer(Transformer):
     @staticmethod
     def load(input_path: str):
         # Old classes used other config names than 'sentence_bert_config.json'
+
+
         for config_name in [
             "sentence_bert_config.json",
             "sentence_roberta_config.json",
@@ -372,6 +393,16 @@ class INSTRUCTORTransformer(Transformer):
             "sentence_xlm-roberta_config.json",
             "sentence_xlnet_config.json",
         ]:
+
+            #### 수정
+            # sbert_config_path = load_file_path(
+            #     input_path,
+            #     config_name
+            #     )
+            
+            if os.path.exists(sbert_config_path):
+                break
+
             sbert_config_path = os.path.join(input_path, config_name)
             if os.path.exists(sbert_config_path):
                 break
@@ -517,7 +548,8 @@ class INSTRUCTOR(SentenceTransformer):
 
         return batched_input_features, labels
 
-    def _load_sbert_model(self, model_path, token=None, cache_folder=None, revision=None, trust_remote_code=False):
+    # 함수 인자 추가해줌(local_files_only, model_kwargs, tokenizer_kwargs, config_kwargs)
+    def _load_sbert_model(self, model_path, token=None, cache_folder=None, revision=None, trust_remote_code=False, local_files_only = False, model_kwargs = None, tokenizer_kwargs = None, config_kwargs = None): 
         """
         Loads a full sentence-transformers model
         """
@@ -526,6 +558,8 @@ class INSTRUCTOR(SentenceTransformer):
         # If file is local
         if os.path.isdir(model_path):
             model_path = str(model_path)
+
+            print("using local")
         else:
             # If model_path is a Hugging Face repository ID, download the model
             download_kwargs = {
@@ -537,47 +571,255 @@ class INSTRUCTOR(SentenceTransformer):
                 "tqdm_class": disabled_tqdm,
             }
 
+            print("Using Hugging Face!!")
+
         # Check if the config_sentence_transformers.json file exists (exists since v2 of the framework)
-        config_sentence_transformers_json_path = os.path.join(
-            model_path, "config_sentence_transformers.json"
+        # config_sentence_transformers_json_path = os.path.join(
+        #     model_path, "config_sentence_transformers.json"
+        # )
+        # if os.path.exists(config_sentence_transformers_json_path):
+        #     with open(
+        #         config_sentence_transformers_json_path, encoding="UTF-8"
+        #     ) as config_file:
+        #         self._model_config = json.load(config_file)
+
+        # 대체코드
+        config_sentence_transformers_json_path = load_file_path(
+            model_path,
+            "config_sentence_transformers.json",
+            token=token,
+            cache_folder=cache_folder,
+            revision=revision,
+            local_files_only=local_files_only,
         )
-        if os.path.exists(config_sentence_transformers_json_path):
-            with open(
-                config_sentence_transformers_json_path, encoding="UTF-8"
-            ) as config_file:
-                self._model_config = json.load(config_file)
+
+        if config_sentence_transformers_json_path is not None:
+            with open(config_sentence_transformers_json_path) as fIn:
+                self._model_config = json.load(fIn)
+
+            # if (
+            #     "__version__" in self._model_config
+            #     and "sentence_transformers" in self._model_config["__version__"]
+            #     and self._model_config["__version__"]["sentence_transformers"] > __version__
+            # ):
+            #     logger.warning(
+            #         "You try to use a model that was created with version {}, however, your version is {}. This might cause unexpected behavior or errors. In that case, try to update to the latest version.\n\n\n".format(
+            #             self._model_config["__version__"]["sentence_transformers"], __version__
+            #         )
+            #     )
 
         # Check if a readme exists
-        model_card_path = os.path.join(model_path, "README.md")
-        if os.path.exists(model_card_path):
+        # model_card_path = os.path.join(model_path, "README.md")
+        # if os.path.exists(model_card_path):
+        #     try:
+        #         with open(model_card_path, encoding="utf8") as config_file:
+        #             self._model_card_text = config_file.read()
+        #     except:
+        #         pass
+
+        # 대체코드 
+        model_card_path = load_file_path(
+            model_path,
+            "README.md",
+            token=token,
+            cache_folder=cache_folder,
+            revision=revision,
+            local_files_only=local_files_only,
+        )
+
+        if model_card_path is not None:
             try:
-                with open(model_card_path, encoding="utf8") as config_file:
-                    self._model_card_text = config_file.read()
-            except:
+                with open(model_card_path, encoding="utf8") as fIn:
+                    self._model_card_text = fIn.read()
+            except Exception:
                 pass
 
         # Load the modules of sentence transformer
-        modules_json_path = os.path.join(model_path, "modules.json")
-        with open(modules_json_path, encoding="UTF-8") as config_file:
-            modules_config = json.load(config_file)
+        # modules_json_path = os.path.join(model_path, "modules.json") 
 
+        # with open(modules_json_path, encoding="UTF-8") as config_file:
+        #     modules_config = json.load(config_file)
+
+        # 대체 코드
+        modules_json_path = load_file_path(
+            model_path,
+            "modules.json",
+            token=token,
+            cache_folder=cache_folder,
+            revision=revision,
+            local_files_only=local_files_only,
+        )
+
+        with open(modules_json_path) as fIn:
+            modules_config = json.load(fIn)        
+
+
+        # 대체 코드
         modules = OrderedDict()
-        for module_config in modules_config:
-            if module_config["idx"] == 0:
-                module_class = INSTRUCTORTransformer
-            elif module_config["idx"] == 1:
-                module_class = INSTRUCTORPooling
-            else:
-                module_class = import_from_string(module_config["type"])
-            module = module_class.load(os.path.join(model_path, module_config["path"]))
-            modules[module_config["name"]] = module
+        module_kwargs = OrderedDict()
 
-        return modules
+        # for module_config in modules_config:
+        #     if module_config["idx"] == 0:
+        #         module_class = INSTRUCTORTransformer
+        #     elif module_config["idx"] == 1:
+        #         module_class = INSTRUCTORPooling
+        #     else:
+        #         module_class = import_from_string(module_config["type"])
+
+        for module_config in modules_config:
+
+            
+            class_ref = module_config["type"]
+
+            # if module_config["idx"] == 0:
+            #     module_class = INSTRUCTORTransformer
+            # elif module_config["idx"] == 1:
+            #     module_class = INSTRUCTORPooling
+            # else:
+            #     module_class = import_from_string(module_config["type"])
+
+
+
+            module_class = self._load_module_class_from_ref(
+                class_ref, model_path, trust_remote_code, revision, model_kwargs
+            )
+
+            # For Transformer, don't load the full directory, rely on `transformers` instead
+            # But, do load the config file first.
+            if module_config["path"] == "":
+                kwargs = {}
+                for config_name in [
+                    "sentence_bert_config.json",
+                    "sentence_roberta_config.json",
+                    "sentence_distilbert_config.json",
+                    "sentence_camembert_config.json",
+                    "sentence_albert_config.json",
+                    "sentence_xlm-roberta_config.json",
+                    "sentence_xlnet_config.json",
+                ]:
+                    config_path = load_file_path(
+                        model_path,
+                        config_name,
+                        token=token,
+                        cache_folder=cache_folder,
+                        revision=revision,
+                        local_files_only=local_files_only,
+                    )
+                    if config_path is not None:
+                        with open(config_path) as fIn:
+                            kwargs = json.load(fIn)
+                            # Don't allow configs to set trust_remote_code
+                            if "model_args" in kwargs and "trust_remote_code" in kwargs["model_args"]:
+                                kwargs["model_args"].pop("trust_remote_code")
+                            if "tokenizer_args" in kwargs and "trust_remote_code" in kwargs["tokenizer_args"]:
+                                kwargs["tokenizer_args"].pop("trust_remote_code")
+                            if "config_args" in kwargs and "trust_remote_code" in kwargs["config_args"]:
+                                kwargs["config_args"].pop("trust_remote_code")
+                        break
+
+                hub_kwargs = {
+                    "token": token,
+                    "trust_remote_code": trust_remote_code,
+                    "revision": revision,
+                    "local_files_only": local_files_only,
+                }
+                # 3rd priority: config file
+                if "model_args" not in kwargs:
+                    kwargs["model_args"] = {}
+                if "tokenizer_args" not in kwargs:
+                    kwargs["tokenizer_args"] = {}
+                if "config_args" not in kwargs:
+                    kwargs["config_args"] = {}
+
+                # 2nd priority: hub_kwargs
+                kwargs["model_args"].update(hub_kwargs)
+                kwargs["tokenizer_args"].update(hub_kwargs)
+                kwargs["config_args"].update(hub_kwargs)
+
+                # 1st priority: kwargs passed to SentenceTransformer
+                if model_kwargs:
+                    kwargs["model_args"].update(model_kwargs)
+                if tokenizer_kwargs:
+                    kwargs["tokenizer_args"].update(tokenizer_kwargs)
+                if config_kwargs:
+                    kwargs["config_args"].update(config_kwargs)
+
+                try:
+                    # for module_config in modules_config:
+                    #     if module_config["idx"] == 0:
+                    #         module_class = INSTRUCTORTransformer
+                    #     elif module_config["idx"] == 1:
+                    #         module_class = INSTRUCTORPooling
+                    #     else:
+                    #         module_class = import_from_string(module_config["type"])
+                            
+                    module = module_class(model_path, cache_dir=cache_folder, backend=self.backend, **kwargs)
+                except TypeError:
+                    # for module_config in modules_config:
+                    #     if module_config["idx"] == 0:
+                    #         module_class = INSTRUCTORTransformer
+                    #     elif module_config["idx"] == 1:
+                    #         module_class = INSTRUCTORPooling
+                    #     else:
+                    #         module_class = import_from_string(module_config["type"])
+
+                    module = module_class.load(model_path)
+            else:
+                # Normalize does not require any files to be loaded
+                if module_class == Normalize:
+                    module_path = None
+                else:
+                    module_path = load_dir_path(
+                        model_path,
+                        module_config["path"],
+                        token=token,
+                        cache_folder=cache_folder,
+                        revision=revision,
+                        local_files_only=local_files_only,
+                    )
+
+                # 대체 코드가 아니라 module_class 
+                # for module_config in modules_config:
+                #     if module_config["idx"] == 0:
+                #       module_class = INSTRUCTORTransformer
+                #     elif module_config["idx"] == 1:
+                #       module_class = INSTRUCTORPooling
+                #     else:
+                #       module_class = import_from_string(module_config["type"])
+
+                module = module_class.load(module_path)
+
+            modules[module_config["name"]] = module
+            module_kwargs[module_config["name"]] = module_config.get("kwargs", [])
+          
+        if revision is None:
+            path_parts = Path(modules_json_path)
+            if len(path_parts.parts) >= 2:
+                revision_path_part = Path(modules_json_path).parts[-2]
+                if len(revision_path_part) == 40:
+                    revision = revision_path_part
+        self.model_card_data.set_base_model(model_path, revision=revision)
+
+
+        # 원래 코드
+        # modules = OrderedDict()
+        # for module_config in modules_config:
+        #     if module_config["idx"] == 0:
+        #         module_class = INSTRUCTORTransformer
+        #     elif module_config["idx"] == 1:
+        #         module_class = INSTRUCTORPooling
+        #     else:
+        #         module_class = import_from_string(module_config["type"])
+
+        #     module = module_class.load(os.path.join(model_path, module_config["path"]))
+        #     modules[module_config["name"]] = module
+
+        return modules, module_kwargs
 
     def encode(
         self,
         sentences,
-        batch_size: int = 32,
+        batch_size: int = 32, # 배치 사이즈 줄임 (원래 32)
         show_progress_bar: Union[bool, None] = None,
         output_value: str = "sentence_embedding",
         convert_to_numpy: bool = True,
@@ -692,3 +934,41 @@ class INSTRUCTOR(SentenceTransformer):
             all_embeddings = all_embeddings[0]
 
         return all_embeddings
+    
+    # logger = logging.getLogger(__name__)
+
+    # def _save(self, output_dir: Optional[str] = None, state_dict=None):
+    #     # If we are executing this function, we are the process zero, so we don't check for that.
+    #     output_dir = output_dir if output_dir is not None else self.args.output_dir
+    #     os.makedirs(output_dir, exist_ok=True)
+    #     logger.info(f"Saving model checkpoint to {output_dir}")
+
+    #     supported_classes = (PreTrainedModel,) if not is_peft_available() else (PreTrainedModel, PeftModel)
+    #     # Save a trained model and configuration using `save_pretrained()`.
+    #     # They can then be reloaded using `from_pretrained()`
+    #     if not isinstance(self.model, supported_classes):
+    #         if state_dict is None:
+    #             state_dict = self.model.state_dict()
+
+    #         if isinstance(self.accelerator.unwrap_model(self.model), supported_classes):
+    #             self.accelerator.unwrap_model(self.model).save_pretrained(
+    #                 output_dir, state_dict=state_dict, safe_serialization=self.args.save_safetensors
+    #             )
+    #         else:
+    #             logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")
+    #             if self.args.save_safetensors:
+    #                 safetensors.torch.save_file(
+    #                     state_dict, os.path.join(output_dir, SAFE_WEIGHTS_NAME), metadata={"format": "pt"}
+    #                 )
+    #             else:
+    #                 torch.save(state_dict, os.path.join(output_dir, WEIGHTS_NAME))
+    #     else:
+    #         self.model.save_pretrained(
+    #             output_dir, state_dict=state_dict, safe_serialization=self.args.save_safetensors
+    #         )
+
+    #     if self.processing_class is not None:
+    #         self.processing_class.save_pretrained(output_dir)
+
+    #     # Good practice: save your training arguments together with the trained model
+    #     torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
